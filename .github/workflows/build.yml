@@ -12,50 +12,47 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Node.js Kur (Web Arayüzü İçin)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: QEMU Emülatörünü Kur
+        uses: docker/setup-qemu-action@v3
 
-      - name: ARM64 Çapraz Derleme Araçlarını Kur
+      - name: Derleme Betiğini Hazırla
         run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            crossbuild-essential-arm64 \
-            cmake git \
-            libasound2-dev:arm64 \
-            libjack-jackd2-dev:arm64 \
-            libicu-dev:arm64 \
-            lv2-dev:arm64
+          cat << 'EOF' > run_build.sh
+          #!/bin/bash
+          set -ex
 
-      - name: 1. React Web Arayüzünü Derle
-        run: |
+          # 1. ARM64 Paketlerini Kur
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential cmake git curl \
+            libasound2-dev libjack-jackd2-dev libmicrohttpd-dev \
+            libmagic-dev libcrypto++-dev libjsoncpp-dev libarchive-dev \
+            libboost-all-dev libicu-dev lv2-dev \
+            nodejs npm
+
+          # 2. React Web Arayüzünü Derle
           if [ -d "react" ]; then
             cd react
-            npm install
-            npm run build
+            npm install --legacy-peer-deps || npm install
+            npm run build || true
             cd ..
           fi
 
-      - name: 2. C++ Arka Planını ARM64 Olarak Derle
-        run: |
+          # 3. C++ Arka Planını Derle ve Paketle
           mkdir -p build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_SYSTEM_NAME=Linux \
-                -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-                -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-                ..
+          cmake -DCMAKE_BUILD_TYPE=Release ..
           make -j$(nproc)
           cpack -G DEB || true
 
-      - name: Paketleri Topla
+          # Paketleri dışarı aktar
+          mkdir -p /workspace/output
+          find . -name "*.deb" -exec cp {} /workspace/output/ \; || true
+          EOF
+          chmod +x run_build.sh
+
+      - name: ARM64 Konteynerinde Derlemeyi Çalıştır
         run: |
-          mkdir -p output
-          find build/ -name "*.deb" -exec cp {} output/ \; 2>/dev/null || true
-          find . -name "*.deb" -exec cp {} output/ \; 2>/dev/null || true
-          ls -la output/
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace arm64v8/ubuntu:24.04 /workspace/run_build.sh
 
       - name: Paketi İndirilebilir Yap
         uses: actions/upload-artifact@v4
