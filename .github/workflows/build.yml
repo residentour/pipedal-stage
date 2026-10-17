@@ -7,50 +7,58 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: Kodu Çek
+      - name: Kodu İndir
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: QEMU ve ARM64 Derleme Ortamını Hazırla
-        uses: docker/setup-qemu-action@v3
+      - name: Node.js Kur (Web Arayüzü İçin)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Docker İçinde ARM64 Olarak Derle
+      - name: ARM64 Çapraz Derleme Araçlarını Kur
         run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace arm64v8/ubuntu:24.04 /bin/bash -c "
-            set -e
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              build-essential cmake git curl \
-              libasound2-dev libjack-jackd2-dev libmicrohttpd-dev \
-              libmagic-dev libcrypto++-dev libjsoncpp-dev libarchive-dev \
-              libboost-all-dev libicu-dev lv2-dev \
-              nodejs npm
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            crossbuild-essential-arm64 \
+            cmake git \
+            libasound2-dev:arm64 \
+            libjack-jackd2-dev:arm64 \
+            libicu-dev:arm64 \
+            lv2-dev:arm64
 
-            # 1. React Web Arayüzünü Derle
-            if [ -d 'react' ]; then
-              cd react
-              npm install
-              npm run build
-              cd ..
-            fi
+      - name: 1. React Web Arayüzünü Derle
+        run: |
+          if [ -d "react" ]; then
+            cd react
+            npm install
+            npm run build
+            cd ..
+          fi
 
-            # 2. C++ Arka Plan Motorunu Derle
-            mkdir -p build && cd build
-            cmake -DCMAKE_BUILD_TYPE=Release ..
-            make -j\$(nproc)
-            cpack -G DEB || true
-          "
+      - name: 2. C++ Arka Planını ARM64 Olarak Derle
+        run: |
+          mkdir -p build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_SYSTEM_NAME=Linux \
+                -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+                -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+                ..
+          make -j$(nproc)
+          cpack -G DEB || true
 
-      - name: Hazır Paketleri Topla
+      - name: Paketleri Topla
         run: |
           mkdir -p output
-          find build/ -name "*.deb" -exec cp {} output/ \; || true
-          find . -name "*.deb" -exec cp {} output/ \; || true
+          find build/ -name "*.deb" -exec cp {} output/ \; 2>/dev/null || true
+          find . -name "*.deb" -exec cp {} output/ \; 2>/dev/null || true
+          ls -la output/
 
-      - name: Paketi İndirilebilir Yap (Artifacts)
+      - name: Paketi İndirilebilir Yap
         uses: actions/upload-artifact@v4
         with:
           name: pipedal-stage-arm64-deb
           path: output/*.deb
-          if-no-files-found: warn
