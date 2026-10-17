@@ -1,61 +1,33 @@
-name: Build ARM64 Debian Package
-
-on:
-  workflow_dispatch:
+name: arm64 build
+on: workflow_dispatch
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
-      - name: Kodu İndir
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: QEMU Emülatörünü Kur
-        uses: docker/setup-qemu-action@v3
-
-      - name: Derleme Betiğini Hazırla
+      - name: Bağımlılıkları Kur
         run: |
-          cat << 'EOF' > run_build.sh
-          #!/bin/bash
-          set -ex
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential nodejs npm \
+            liblilv-dev libboost-dev libsystemd-dev catch2 libasound2-dev uuid-dev authbind \
+            libavahi-client-dev libnm-dev libicu-dev libsdbus-c++-dev libzip-dev \
+            google-perftools libgoogle-perftools-dev libpipewire-0.3-dev libbz2-dev \
+            libssl-dev librsvg2-dev
+          chmod +x ./react-config ./makePackage.sh 2>/dev/null || true
+          ./react-config
 
-          # 1. ARM64 Paketlerini Kur
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential cmake git curl \
-            libasound2-dev libjack-jackd2-dev libmicrohttpd-dev \
-            libmagic-dev libcrypto++-dev libjsoncpp-dev libarchive-dev \
-            libboost-all-dev libicu-dev lv2-dev \
-            nodejs npm
+      - name: Derle
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja && cmake --build build
 
-          # 2. React Web Arayüzünü Derle
-          if [ -d "react" ]; then
-            cd react
-            npm install --legacy-peer-deps || npm install
-            npm run build || true
-            cd ..
-          fi
-
-          # 3. C++ Arka Planını Derle ve Paketle
-          mkdir -p build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(nproc)
-          cpack -G DEB || true
-
-          # Paketleri dışarı aktar
-          mkdir -p /workspace/output
-          find . -name "*.deb" -exec cp {} /workspace/output/ \; || true
-          EOF
-          chmod +x run_build.sh
-
-      - name: ARM64 Konteynerinde Derlemeyi Çalıştır
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace arm64v8/ubuntu:24.04 /workspace/run_build.sh
+      - name: Debian Paketi Oluştur
+        run: ./makePackage.sh
 
       - name: Paketi İndirilebilir Yap
         uses: actions/upload-artifact@v4
         with:
-          name: pipedal-stage-arm64-deb
-          path: output/*.deb
+          name: pipedal-stage-arm64
+          path: "**/*.deb"
